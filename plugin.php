@@ -1899,98 +1899,108 @@ public function importar_producto_id() {
         return $ml_product_id; // O el ID del producto actualizado
     }
 //Funcion Documentada en el Documento
-    public function upload_product_to_mercadolibre()
-    {
-        $this->log_debug("🚀 Iniciando sincronización del producto con MercadoLibre");
+public function upload_product_to_mercadolibre()
+{
+    // 1) --- Log inicial para depuración ---
+    $this->log_debug("🚀 Iniciando sincronización del producto con MercadoLibre");
 
-        // Verifica Token
-        if (!$this->check_and_refresh_token()) {
-            $this->log_error("❌ No se pudo obtener un token de acceso válido.");
-            wp_send_json_error("No se pudo obtener un token de acceso válido.");
-        }
-
-        // Prepara la data del producto
-        $ml_product_data = $this->prepare_product_test();
-        if (is_wp_error($ml_product_data)) {
-            wp_send_json_error($ml_product_data->get_error_message());
-        }
-
-        // VALIDACIÓN DE METADATOS CRÍTICOS
-        $woo_id = $ml_product_data['woo_id'] ?? 0;
-        $producto = wc_get_product($woo_id);
-
-        if (!$producto) {
-            $this->log_error("❌ Producto de WooCommerce no encontrado con ID: $woo_id");
-            wp_send_json_error("Producto de WooCommerce no encontrado.");
-        }
-
-        // Verifica categoría de ML
-        $ml_category_id = get_post_meta($woo_id, '_ml_category_id', true);
-        if (empty($ml_category_id)) {
-            $this->log_error("❌ Falta el ID de categoría de MercadoLibre en el producto.");
-            wp_send_json_error("Falta la categoría de MercadoLibre en el producto.");
-        }
-
-        // Verifica atributos obligatorios
-        $ml_attributes = get_post_meta($woo_id, '_ml_attributes', true);
-        if (empty($ml_attributes)) {
-            $this->log_error("❌ El producto no tiene atributos de ML definidos.");
-            wp_send_json_error("Faltan los atributos obligatorios para MercadoLibre.");
-        }
-
-        // Verifica imágenes
-        if (empty($ml_product_data['pictures'])) {
-            $this->log_error("❌ El producto no contiene imágenes para publicar en MercadoLibre.");
-            wp_send_json_error("El producto debe tener al menos una imagen.");
-        }
-
-        $endpoint = WOO_ML_API_ENDPOINT . '/items';
-        $method = 'POST';
-
-        $response = $this->make_api_request($endpoint, $method, $ml_product_data);
-
-        if (is_wp_error($response)) {
-            $this->log_error('❌ Error al hacer request a MercadoLibre: ' . $response->get_error_message());
-            wp_send_json_error('Error al sincronizar el producto: ' . $response->get_error_message());
-        }
-
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        $status_code = wp_remote_retrieve_response_code($response);
-
-        // Manejo especial: body.invalid
-        if ($status_code === 400 && isset($body['message']) && $body['message'] === 'body.invalid') {
-            $titulo = $producto->get_name();
-            $this->log_error("⚠️ Producto omitido por error body.invalid - WooID: $woo_id, Título: $titulo");
-
-            if (!empty($body['cause'])) {
-                foreach ($body['cause'] as $cause) {
-                    $this->log_error("🔍 Causa body.invalid: " . print_r($cause, true));
-                }
-            }
-
-            wp_send_json_error("MercadoLibre rechazó el producto por datos inválidos.");
-            return;
-        }
-
-        // Manejo de éxito
-        if ($status_code === 200 || $status_code === 201) {
-            $this->log_debug("✅ Producto creado correctamente en MercadoLibre. ID: " . $body['id']);
-            wp_send_json_success("Producto creado exitosamente con ID: " . $body['id']);
-            return;
-        }
-
-        // Otros errores
-        $error_message = isset($body['message']) ? $body['message'] : __('Error desconocido', 'woo-ml-sync');
-        $this->log_error("❌ Error inesperado. Código: $status_code. Mensaje: $error_message");
-
-        if (isset($body['cause'])) {
-            foreach ($body['cause'] as $cause) {
-                $this->log_error("🔍 Causa detallada: " . print_r($cause, true));
-            }
-        }
-
-        wp_send_json_error("Error al sincronizar el producto. Código: $status_code. Mensaje: $error_message");
+    // 2) --- Verifica Token de acceso ---
+    //     Si no puede obtener uno válido, corta el flujo y responde error al front-end.
+    if (!$this->check_and_refresh_token()) {
+        $this->log_error("❌ No se pudo obtener un token de acceso válido.");
+        wp_send_json_error("No se pudo obtener un token de acceso válido.");
     }
+
+    // 3) --- Prepara la data del producto en formato compatible con ML ---
+    //     Esta función debería mapear los campos Woo → ML.
+    $ml_product_data = $this->prepare_product_test();
+    if (is_wp_error($ml_product_data)) {
+        wp_send_json_error($ml_product_data->get_error_message());
+    }
+
+    // 4) --- Validación de metadatos críticos ---
+    $woo_id  = $ml_product_data['woo_id'] ?? 0;       // ID WooCommerce del producto.
+    $producto = wc_get_product($woo_id);              // Objeto WC_Product a partir del ID.
+
+    if (!$producto) {
+        $this->log_error("❌ Producto de WooCommerce no encontrado con ID: $woo_id");
+        wp_send_json_error("Producto de WooCommerce no encontrado.");
+    }
+
+    // 4.1) Verifica si el producto tiene categoría ML asignada.
+    $ml_category_id = get_post_meta($woo_id, '_ml_category_id', true);
+    if (empty($ml_category_id)) {
+        $this->log_error("❌ Falta el ID de categoría de MercadoLibre en el producto.");
+        wp_send_json_error("Falta la categoría de MercadoLibre en el producto.");
+    }
+
+    // 4.2) Verifica atributos obligatorios (ej. talla, color, etc.)
+    $ml_attributes = get_post_meta($woo_id, '_ml_attributes', true);
+    if (empty($ml_attributes)) {
+        $this->log_error("❌ El producto no tiene atributos de ML definidos.");
+        wp_send_json_error("Faltan los atributos obligatorios para MercadoLibre.");
+    }
+
+    // 4.3) Verifica que el producto tenga al menos una imagen.
+    if (empty($ml_product_data['pictures'])) {
+        $this->log_error("❌ El producto no contiene imágenes para publicar en MercadoLibre.");
+        wp_send_json_error("El producto debe tener al menos una imagen.");
+    }
+
+    // 5) --- Configuración de endpoint y método ---
+    $endpoint = WOO_ML_API_ENDPOINT . '/items';
+    $method   = 'POST';
+
+    // 6) --- Hace la request a la API de MercadoLibre con la data preparada ---
+    $response = $this->make_api_request($endpoint, $method, $ml_product_data);
+
+    // 6.1) Si ocurre un error de WordPress (timeout, fallo conexión, etc.)
+    if (is_wp_error($response)) {
+        $this->log_error('❌ Error al hacer request a MercadoLibre: ' . $response->get_error_message());
+        wp_send_json_error('Error al sincronizar el producto: ' . $response->get_error_message());
+    }
+
+    // 6.2) Procesa la respuesta de MercadoLibre.
+    $body        = json_decode(wp_remote_retrieve_body($response), true);
+    $status_code = wp_remote_retrieve_response_code($response);
+
+    // 7) --- Manejo especial para errores "body.invalid" ---
+    if ($status_code === 400 && isset($body['message']) && $body['message'] === 'body.invalid') {
+        $titulo = $producto->get_name();
+        $this->log_error("⚠️ Producto omitido por error body.invalid - WooID: $woo_id, Título: $titulo");
+
+        // Loguea causas específicas que MercadoLibre devuelve.
+        if (!empty($body['cause'])) {
+            foreach ($body['cause'] as $cause) {
+                $this->log_error("🔍 Causa body.invalid: " . print_r($cause, true));
+            }
+        }
+
+        wp_send_json_error("MercadoLibre rechazó el producto por datos inválidos.");
+        return;
+    }
+
+    // 8) --- Manejo de éxito (códigos 200 o 201) ---
+    if ($status_code === 200 || $status_code === 201) {
+        $this->log_debug("✅ Producto creado correctamente en MercadoLibre. ID: " . $body['id']);
+        wp_send_json_success("Producto creado exitosamente con ID: " . $body['id']);
+        return;
+    }
+
+    // 9) --- Otros errores inesperados ---
+    $error_message = isset($body['message']) ? $body['message'] : __('Error desconocido', 'woo-ml-sync');
+    $this->log_error("❌ Error inesperado. Código: $status_code. Mensaje: $error_message");
+
+    // 9.1) Si MercadoLibre envió causas detalladas, las registramos en logs.
+    if (isset($body['cause'])) {
+        foreach ($body['cause'] as $cause) {
+            $this->log_error("🔍 Causa detallada: " . print_r($cause, true));
+        }
+    }
+
+    // 9.2) Devolvemos error al front-end con detalles.
+    wp_send_json_error("Error al sincronizar el producto. Código: $status_code. Mensaje: $error_message");
+}
 
     private function prepare_product_test()
     {
@@ -4158,68 +4168,79 @@ private function update_stock_with_virtual($wc_product, $ml_product_data, $varia
 //     return true;
 // }
 
-    //Funcion Documentada en el Documento
-    //Por cada producto existente en WooCommerce, crea un producto en Mercadolibre
-    public function importarTodoMercadolibre()
-    {
-    // Verifica nonce para evitar ataques CSRF
+//Funcion Documentada en el Documento
+//Por cada producto existente en WooCommerce, crea un producto en Mercadolibre
+public function importarTodoMercadolibre()
+{
+    // 1) Verifica nonce para evitar ataques CSRF
     check_ajax_referer('importarTodoMercadolibre_nonce', 'nonce');
 
-    // Verifica token de Acceso
+    // 2) Verifica token de Acceso (OAuth con ML)
+    //    Si no se obtiene un token válido, devuelve error
     if (!$this->check_and_refresh_token()) {
         wp_send_json_error(__('Error: Token inválido o caducado.', 'woo-ml-sync'));
     }
 
+    // 3) Log inicial indicando que comienza la obtención de productos
     $this->log_debug("Iniciando la obtención de información de productos de Mercadolibre (solo visualización).");
 
-    // Recupera parámetros enviados desde el front-end
-    $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+    // 4) Recupera parámetros enviados desde el front-end
+    $offset    = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
     $scroll_id = isset($_POST['scroll_id']) ? sanitize_text_field($_POST['scroll_id']) : null;
 
     try {
-        // Obtener el usuario de MercadoLibre
-        $user_endpoint = WOO_ML_API_ENDPOINT . '/users/me';
-        $user_response = $this->make_api_request_v2($user_endpoint, 'GET');
+        // 5) Obtener el usuario de MercadoLibre (para sacar el user_id/seller_id)
+        $user_endpoint  = WOO_ML_API_ENDPOINT . '/users/me';
+        $user_response  = $this->make_api_request_v2($user_endpoint, 'GET');
 
+        // 5.1) Validar respuesta
         if (is_wp_error($user_response)) {
             throw new Exception('Error al obtener el usuario de Mercadolibre: ' . $user_response->get_error_message());
         }
 
+        // 5.2) Decodificar body y extraer user_id
         $user_body = json_decode(wp_remote_retrieve_body($user_response), true);
-        $user_id = $user_body['id'];
+        $user_id   = $user_body['id'];
 
-        // Obtener productos
+        // 6) Construir endpoint de búsqueda de productos (con scroll/paginación)
         $products_endpoint = $scroll_id
             ? WOO_ML_API_ENDPOINT . "/users/{$user_id}/items/search?limit=100&search_type=scan&scroll_id={$scroll_id}"
             : WOO_ML_API_ENDPOINT . "/users/{$user_id}/items/search?limit=100&search_type=scan";
 
+        // 6.1) Llamada para obtener productos
         $products_response = $this->make_api_request_v2($products_endpoint, 'GET');
 
+        // 6.2) Validar respuesta
         if (is_wp_error($products_response)) {
             throw new Exception(__('Error al obtener productos de Mercadolibre: ', 'woo-ml-sync') . $products_response->get_error_message());
         }
 
-        $products_body = json_decode(wp_remote_retrieve_body($products_response), true);
-        $new_scroll_id = $products_body['scroll_id'] ?? null;
+        // 6.3) Decodificar productos y obtener nuevo scroll_id (para la siguiente página)
+        $products_body  = json_decode(wp_remote_retrieve_body($products_response), true);
+        $new_scroll_id  = $products_body['scroll_id'] ?? null;
 
-        // Procesar cada producto
+        // 7) Procesar resultados si existen
         if (!empty($products_body['results'])) {
             foreach ($products_body['results'] as $ml_product_id) {
-                $product_detail_endpoint = WOO_ML_API_ENDPOINT . "/items/{$ml_product_id}";
-                $product_detail_response = $this->make_api_request_v2($product_detail_endpoint, 'GET');
+                // 7.1) Endpoint de detalle por producto
+                $product_detail_endpoint  = WOO_ML_API_ENDPOINT . "/items/{$ml_product_id}";
+                $product_detail_response  = $this->make_api_request_v2($product_detail_endpoint, 'GET');
 
+                // 7.2) Si la respuesta fue válida, decodificar
                 if (!is_wp_error($product_detail_response)) {
                     $product_detail = json_decode(wp_remote_retrieve_body($product_detail_response), true);
 
-                    // Separador entre productos
+                    // --- Separador visual en logs ---
                     $this->log_debug("========================================");
 
-                    // Datos básicos del producto
+                    // 7.3) Log de datos básicos del producto
                     $this->log_debug("Nombre: " . ($product_detail['title'] ?? 'Sin nombre'));
-                    $this->log_debug("Estado: " . (isset($product_detail['status']) ? ($product_detail['status'] === 'active' ? 'Activo' : 'Inactivo') : 'Estado desconocido'));
+                    $this->log_debug("Estado: " . (isset($product_detail['status']) 
+                        ? ($product_detail['status'] === 'active' ? 'Activo' : 'Inactivo') 
+                        : 'Estado desconocido'));
                     $this->log_debug("N° Publicación: " . $ml_product_id);
 
-                    // Obtener SKU correcto (de los atributos)
+                    // 7.4) Extraer SKU desde atributos (SELLER_SKU)
                     $sku = 'Sin SKU';
                     if (isset($product_detail['attributes']) && is_array($product_detail['attributes'])) {
                         foreach ($product_detail['attributes'] as $attribute) {
@@ -4231,7 +4252,7 @@ private function update_stock_with_virtual($wc_product, $ml_product_data, $varia
                     }
                     $this->log_debug("SKU: " . $sku);
 
-                    // Obtener jerarquía completa de categorías
+                    // 7.5) Obtener jerarquía completa de categorías si existe category_id
                     if (isset($product_detail['category_id'])) {
                         $category_endpoint = WOO_ML_API_ENDPOINT . "/categories/{$product_detail['category_id']}";
                         $category_response = $this->make_api_request_v2($category_endpoint, 'GET');
@@ -4239,7 +4260,7 @@ private function update_stock_with_virtual($wc_product, $ml_product_data, $varia
                         if (!is_wp_error($category_response)) {
                             $category_data = json_decode(wp_remote_retrieve_body($category_response), true);
 
-                            // Mostrar toda la jerarquía de categorías
+                            // 7.5.1) Mostrar jerarquía completa de categorías si existe
                             if (!empty($category_data['path_from_root'])) {
                                 $jerarquia_categorias = array_map(function($cat) {
                                     return $cat['name'];
@@ -4250,37 +4271,39 @@ private function update_stock_with_virtual($wc_product, $ml_product_data, $varia
                                 $this->log_debug("Categoría: " . ($category_data['name'] ?? 'Sin categoría'));
                             }
 
+                            // Log del código de categoría
                             $this->log_debug("Código Categoría: " . $product_detail['category_id']);
                         }
                     } else {
+                        // 7.5.2) Si no existe categoría
                         $this->log_debug("Categoría: Sin categoría");
                         $this->log_debug("Código Categoría: Sin código");
                     }
                 }
             }
-            // Separador final
+            // --- Separador final en logs ---
             $this->log_debug("========================================");
         }
 
-        // Determinar si hay más productos
+        // 8) Determinar si hay más productos por procesar
         $has_more = !empty($products_body['results']) || !empty($new_scroll_id);
 
-        // Respuesta final
+        // 9) Enviar respuesta final al front-end
         wp_send_json_success([
-            'scroll_id' => $new_scroll_id,
-            'offset' => $offset + 100,
-            'has_more' => $has_more,
-            'message' => 'Obteniendo información de productos...'
+            'scroll_id' => $new_scroll_id,     // Para continuar la paginación
+            'offset'    => $offset + 100,      // Avanza el offset
+            'has_more'  => $has_more,          // Indica si hay más productos
+            'message'   => 'Obteniendo información de productos...'
         ]);
 
     } catch (Exception $e) {
+        // 10) Manejo centralizado de errores
         $this->log_debug("========================================");
         $this->log_debug("Error al obtener información: " . $e->getMessage());
         $this->log_debug("========================================");
         wp_send_json_error($e->getMessage());
     }
 }
-
     public function sync_all_products()
     {
         //En la primera tanda, obtener todos los productos de WooCommerce y almacenar sus IDs en un array
@@ -4853,30 +4876,41 @@ private function update_stock_with_virtual($wc_product, $ml_product_data, $varia
         return 0; // Devuelve 0 si no la encuentra
     }
 /* Funcion Documentada en el Documento*/
-    public function borrarProductosWooCommerce()
-    {
-        //Verificar Nonce de Seguridad
-        check_ajax_referer('borrarProductosWooCommerce_nonce', 'nonce');
+   public function borrarProductosWooCommerce()
+{
+    // 1) --- Verificar Nonce de Seguridad (protege contra CSRF) ---
+    //     Debe coincidir con el nonce que envía el front-end en la llamada AJAX.
+    check_ajax_referer('borrarProductosWooCommerce_nonce', 'nonce');
 
-        // Obtener todos los productos de WooCommerce
-        $args = [
-            'post_type' => 'product',
-            'post_status' => 'any',
-            'numberposts' => -1
-        ];
-        $products = get_posts($args);
+    // 2) --- Construir query para traer TODOS los productos ---
+    //     - post_type: 'product' (tipo de post de WooCommerce)
+    //     - post_status: 'any' (no limita por estado: publish, draft, trash, etc.)
+    //     - numberposts: -1 (sin límite: trae todos los productos)
+    $args = [
+        'post_type'   => 'product',
+        'post_status' => 'any',
+        'numberposts' => -1,
+    ];
 
-        if (count(get_posts($args)) < 1) {
-            wp_send_json_error('No se han encontrado productos en WooCommerce para eliminar.');
-        }
+    // 2.1) Ejecutar la consulta y obtener la lista de productos como posts (WP_Post[])
+    $products = get_posts($args);
 
-        // Eliminar cada producto
-        foreach ($products as $product) {
-            wp_delete_post($product->ID, true);
-        }
-
-        wp_send_json_success('Se han eliminado todos los productos de WooCommerce con éxito.');
+    // 3) --- Validación temprana: si no hay productos, responder con error JSON ---
+    //     Se vuelve a usar get_posts($args) para contar; alternativamente podrías usar count($products).
+    if (count(get_posts($args)) < 1) {
+        wp_send_json_error('No se han encontrado productos en WooCommerce para eliminar.');
     }
+
+    // 4) --- Eliminar cada producto encontrado ---
+    //     Recorremos el arreglo de WP_Post y eliminamos de forma permanente con `wp_delete_post`.
+    //     El segundo parámetro `true` significa "force delete": no va a la papelera.
+    foreach ($products as $product) {
+        wp_delete_post($product->ID, true);
+    }
+
+    // 5) --- Responder con éxito en formato JSON para consumo del front-end ---
+    wp_send_json_success('Se han eliminado todos los productos de WooCommerce con éxito.');
+}
 
     public function sync_stock_mercadolibre($notificacion)
     {
@@ -5734,109 +5768,143 @@ private function update_stock_with_virtual($wc_product, $ml_product_data, $varia
     
     /* Función para cargar los productos en el nav->#productos */
     /* Funcion Documentada y Explicada en el Documento*/
-    public function get_synced_products_callback()
-    {
-        // Verificación de seguridad
-        check_ajax_referer('get_synced_products_nonce', 'nonce');
+    /* Callback AJAX para obtener productos sincronizados entre Mercado Libre y WooCommerce. */
+public function get_synced_products_callback()
+{
+    // 1) --- Verificación de seguridad contra CSRF (nonce enviado desde el front-end) ---
+    check_ajax_referer('get_synced_products_nonce', 'nonce');
 
-        // Manejo del token de acceso
-        if (!$this->check_and_refresh_token()) {
-            $this->log_error('get_synced_products: Fallo al refrescar el token de acceso.');
-            wp_send_json_error(['message' => 'No se pudo obtener un token de acceso válido.']);
-            return;
+    // 2) --- Manejo del token de acceso (refresca si es necesario) ---
+    //     Si no logramos un token válido, registramos error y cortamos con respuesta JSON.
+    if (!$this->check_and_refresh_token()) {
+        $this->log_error('get_synced_products: Fallo al refrescar el token de acceso.');
+        wp_send_json_error(['message' => 'No se pudo obtener un token de acceso válido.']);
+        return; // Importante: asegurar que no siga ejecutándose.
+    }
+
+    try {
+        // 3) --- INICIO DE PETICIONES A LA API DE MERCADO LIBRE ---
+
+        // 3.1) Endpoint para obtener los datos del usuario actual (para extraer seller_id).
+        $user_endpoint  = WOO_ML_API_ENDPOINT . '/users/me';
+        //      Se usa un wrapper que no loguea la respuesta completa (por posible volumen/privacidad).
+        $user_response  = $this->make_api_request_sinLog($user_endpoint, 'GET');
+        
+        // 3.2) Validación de la respuesta HTTP (error WP o código != 200)
+        if (is_wp_error($user_response) || wp_remote_retrieve_response_code($user_response) !== 200) {
+            // Lanza excepción para que sea capturada por el catch y centralizar manejo de errores.
+            throw new Exception('No se pudo obtener la información del usuario de Mercado Libre.');
         }
 
-        try {
-            // --- INICIO DE PETICIONES A LA API ---
+        // 3.3) Decodifica el body JSON y extrae el ID del vendedor (seller_id).
+        $user_body  = json_decode(wp_remote_retrieve_body($user_response), true);
+        $seller_id  = $user_body['id']; // Asumimos que siempre viene "id" si el 200 fue OK.
 
-            // Obtener el ID del vendedor mediante llamada a la API
-            $user_endpoint = WOO_ML_API_ENDPOINT . '/users/me';
-            $user_response = $this->make_api_request_sinLog($user_endpoint, 'GET');
-            
-            // Si la llamada da error
-            if (is_wp_error($user_response) || wp_remote_retrieve_response_code($user_response) !== 200) {
-                throw new Exception('No se pudo obtener la información del usuario de Mercado Libre.');
-            }
-            // De lo contrario se guarda en una lista
-            $user_body = json_decode(wp_remote_retrieve_body($user_response), true);
-            $seller_id = $user_body['id'];
+        // 4) --- Paginación de ítems del vendedor ---
+        // 4.1) La página llega desde el front-end por POST; si no, por defecto 1.
+        $page   = isset($_POST['page']) ? intval($_POST['page']) : 1;
+        // 4.2) Límite de ítems por página para no saturar la UI ni la red.
+        $limit  = 20; // Ajustable: balance entre llamadas y volumen de datos.
+        // 4.3) Calcula el offset a partir de la página actual.
+        $offset = ($page - 1) * $limit;
 
-            // Obtener la lista de IDs de productos del vendedor (paginado)
-            $page = isset($_POST['page']) ? intval($_POST['page']) : 1; // Determinar página
-            $limit = 20; // Límite de productos por página para no saturar
-            $offset = ($page - 1) * $limit; // Calcular desde donde empieza a obtener productos
-            $items_list_endpoint = WOO_ML_API_ENDPOINT . "/users/{$seller_id}/items/search?status=active&limit={$limit}&offset={$offset}";
-            $items_list_response = $this->make_api_request_sinLog($items_list_endpoint, 'GET'); // Obtener la lista
-            
-            // Verificar errores
-            if (is_wp_error($items_list_response) || wp_remote_retrieve_response_code($items_list_response) !== 200) {
-                throw new Exception('No se pudo obtener la lista de productos de Mercado Libre.');
-            }
-            // Guardar la respuesta
-            $items_list_body = json_decode(wp_remote_retrieve_body($items_list_response), true);
-            $ml_ids = $items_list_body['results'] ?? [];
-            $total_ml_items = $items_list_body['paging']['total'] ?? 0; // Total de productos
-            $total_pages = ceil($total_ml_items / $limit); // Número de páginas a cargar
-            $productos_formateados = array(); // Array para guardar lo necesario de los productos
-
-            // Si no esta vacío
-            if (!empty($ml_ids)) {
-                // Obtener los detalles de todos los productos en una sola llamada
-                $ids_string = implode(',', $ml_ids);
-                $details_endpoint = WOO_ML_API_ENDPOINT . "/items?ids={$ids_string}&attributes=id,title,permalink,thumbnail,seller_custom_field";
-                $details_response = $this->make_api_request_sinLog($details_endpoint, 'GET');
-                
-                // Si llamada da error, devuelve una respuesta
-                if (is_wp_error($details_response) || wp_remote_retrieve_response_code($details_response) !== 200) {
-                    throw new Exception('No se pudieron obtener los detalles de los productos de Mercado Libre.');
-                }
-                $ml_products_details = json_decode(wp_remote_retrieve_body($details_response), true); // Obtener respuesta
-                
-                // Si la llamada es nula, da error también
-                if ($ml_products_details === null) {
-                    throw new Exception('La respuesta de la API para los detalles de productos es nula.');
-                }
-
-                // Recorrer los resultados y formatear la información
-                foreach ($ml_products_details as $item) {
-                    $ml_product = $item['body']; // Destalles del producto
-                    $sku = $ml_product['seller_custom_field'] ?? 'N/A'; // SKU, si no tiene N/A
-
-                    // Buscar el producto en WooCommerce por SKU
-                    $wc_product_id = !empty($sku) ? wc_get_product_id_by_sku($sku) : 0;
-                    $wc_product = $wc_product_id ? wc_get_product($wc_product_id) : null;
-                    
-                    // Poner productos en una lista
-                    $productos_formateados[] = [
-                        'image' => esc_url($ml_product['thumbnail']),
-                        'id' => $wc_product ? $wc_product->get_id() : 'N/A',
-                        'name' => esc_html($ml_product['title']),
-                        'sku' => esc_html($sku),
-                        'permalink_ml' => esc_url($ml_product['permalink']),
-                        'permalink_wc' => $wc_product ? get_edit_post_link($wc_product->get_id()) : '#',
-                        'permalink_page' => $wc_product ? $wc_product->get_permalink() : '#',
-                    ];
-                }
-            }
-
-            // Contar productos de WooCommerce (Nota: puede ser lento en sitios muy grandes)
-            $total_wc_items = count(wc_get_products(['limit' => -1, 'return' => 'ids']));
-
-            // Enviar la respuesta correcta al frontend
-            wp_send_json_success([
-                'products' => $productos_formateados,
-                'total_pages' => $total_pages,
-                'total_ml_items' => $total_ml_items,
-                'total_wc_items' => $total_wc_items,
-            ]);
-
-        } catch (Exception $e) {
-            // Manejo de errores centralizado
-            $this->log_error('get_synced_products: ' . $e->getMessage());
-            wp_send_json_error(['message' => 'Error al procesar la solicitud: ' . $e->getMessage()]);
+        // 4.4) Endpoint para listar IDs de ítems activos del vendedor con paginación.
+        //      status=active para enfocarnos en publicaciones vigentes.
+        $items_list_endpoint  = WOO_ML_API_ENDPOINT . "/users/{$seller_id}/items/search?status=active&limit={$limit}&offset={$offset}";
+        $items_list_response  = $this->make_api_request_sinLog($items_list_endpoint, 'GET');
+        
+        // 4.5) Validación de respuesta de la lista de ítems.
+        if (is_wp_error($items_list_response) || wp_remote_retrieve_response_code($items_list_response) !== 200) {
+            throw new Exception('No se pudo obtener la lista de productos de Mercado Libre.');
         }
+
+        // 4.6) Decodifica la respuesta y extrae IDs y totales para UI/paginación.
+        $items_list_body  = json_decode(wp_remote_retrieve_body($items_list_response), true);
+        $ml_ids           = $items_list_body['results'] ?? [];                // Lista de IDs ML.
+        $total_ml_items   = $items_list_body['paging']['total'] ?? 0;         // Total de ítems (para paginación).
+        $total_pages      = ceil($total_ml_items / $limit);                   // Cantidad total de páginas.
+        $productos_formateados = [];                                          // Aquí construiremos la respuesta final por ítem.
+
+        // 5) --- Si hay IDs, pedimos detalles en batch para optimizar ---
+        if (!empty($ml_ids)) {
+            // 5.1) Unimos IDs en un string separado por comas para usar el batch endpoint /items?ids=...
+            $ids_string       = implode(',', $ml_ids);
+
+            // 5.2) Limitamos atributos para aligerar payload:
+            //      - id/title/permalink/thumbnail para mostrar
+            //      - seller_custom_field (SKU definido por el vendedor) para cruzar con Woo.
+            $details_endpoint = WOO_ML_API_ENDPOINT . "/items?ids={$ids_string}&attributes=id,title,permalink,thumbnail,seller_custom_field";
+            $details_response = $this->make_api_request_sinLog($details_endpoint, 'GET');
+            
+            // 5.3) Validación de respuesta de detalles.
+            if (is_wp_error($details_response) || wp_remote_retrieve_response_code($details_response) !== 200) {
+                throw new Exception('No se pudieron obtener los detalles de los productos de Mercado Libre.');
+            }
+
+            // 5.4) Decodificamos: la API devuelve una lista donde cada elemento tiene "body" con los datos del item.
+            $ml_products_details = json_decode(wp_remote_retrieve_body($details_response), true);
+            if ($ml_products_details === null) {
+                throw new Exception('La respuesta de la API para los detalles de productos es nula.');
+            }
+
+            // 5.5) Recorremos cada resultado de detalle para formatear la información de salida.
+            foreach ($ml_products_details as $item) {
+                // Cada $item trae "code" y "body"; nos interesa el "body".
+                $ml_product = $item['body'] ?? null;
+
+                // Validación defensiva: si por alguna razón un elemento viene sin body, lo saltamos.
+                if (!$ml_product || !is_array($ml_product)) {
+                    continue;
+                }
+
+                // 5.5.1) El SKU se suele guardar en seller_custom_field; si no existe, marcamos "N/A".
+                $sku = $ml_product['seller_custom_field'] ?? 'N/A';
+
+                // 5.5.2) Buscamos el ID del producto en WooCommerce por SKU (si hay SKU no vacío).
+                $wc_product_id = !empty($sku) ? wc_get_product_id_by_sku($sku) : 0;
+
+                // 5.5.3) Si encontramos el ID, cargamos la instancia del producto.
+                $wc_product    = $wc_product_id ? wc_get_product($wc_product_id) : null;
+                
+                // 5.5.4) Armamos la estructura final por producto para la UI del admin (tabla/grid).
+                //         - Escapamos URLs y texto para seguridad en el admin.
+                //         - Agregamos enlaces al admin de Woo y a la página pública si existe el producto.
+                $productos_formateados[] = [
+                    'image'          => esc_url($ml_product['thumbnail'] ?? ''),                     // Miniatura en ML.
+                    'id'             => $wc_product ? $wc_product->get_id() : 'N/A',                // ID Woo o N/A si no se mapeó.
+                    'name'           => esc_html($ml_product['title'] ?? ''),                       // Título de ML.
+                    'sku'            => esc_html($sku),                                             // SKU usado para el match.
+                    'permalink_ml'   => esc_url($ml_product['permalink'] ?? ''),                    // Link a publicación ML.
+                    'permalink_wc'   => $wc_product ? get_edit_post_link($wc_product->get_id()) : '#', // Link edición Woo.
+                    'permalink_page' => $wc_product ? $wc_product->get_permalink() : '#',           // Link público Woo.
+                ];
+            }
+        }
+
+        // 6) --- Conteo total de productos en WooCommerce ---
+        //      ¡Advertencia!: En catálogos MUY grandes esto puede ser costoso porque carga todos los IDs.
+        //      Alternativas: usar consultas directas a la DB o un contador cacheado.
+        $total_wc_items = count(wc_get_products([
+            'limit'  => -1,   // -1 = sin límite, trae todos los IDs (potencialmente pesado).
+            'return' => 'ids' // Pedimos sólo IDs para ahorrar memoria respecto a objetos completos.
+        ]));
+
+        // 7) --- Enviar respuesta al front-end con datos de productos y metadatos de paginación ---
+        wp_send_json_success([
+            'products'        => $productos_formateados, // Lista (posiblemente vacía si no hubo ítems).
+            'total_pages'     => $total_pages,           // Nº total de páginas calculadas desde ML.
+            'total_ml_items'  => $total_ml_items,        // Total de ítems activos en ML (para UI).
+            'total_wc_items'  => $total_wc_items,        // Total de productos en Woo (para métricas).
+        ]);
+
+    } catch (Exception $e) {
+        // 8) --- Manejo centralizado de errores ---
+        //     Logueamos el mensaje y devolvemos un error genérico al front-end.
+        $this->log_error('get_synced_products: ' . $e->getMessage());
+        wp_send_json_error(['message' => 'Error al procesar la solicitud: ' . $e->getMessage()]);
     }
 }
+
 
     function woo_ml_init()
     {
