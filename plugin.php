@@ -1898,7 +1898,7 @@ public function importar_producto_id() {
         $this->log_debug("Producto actualizado exitosamente");
         return $ml_product_id; // O el ID del producto actualizado
     }
-
+//Funcion Documentada en el Documento
     public function upload_product_to_mercadolibre()
     {
         $this->log_debug("🚀 Iniciando sincronización del producto con MercadoLibre");
@@ -4158,7 +4158,7 @@ private function update_stock_with_virtual($wc_product, $ml_product_data, $varia
 //     return true;
 // }
 
-
+    //Funcion Documentada en el Documento
     //Por cada producto existente en WooCommerce, crea un producto en Mercadolibre
     public function importarTodoMercadolibre()
     {
@@ -4852,7 +4852,7 @@ private function update_stock_with_virtual($wc_product, $ml_product_data, $varia
 
         return 0; // Devuelve 0 si no la encuentra
     }
-
+/* Funcion Documentada en el Documento*/
     public function borrarProductosWooCommerce()
     {
         //Verificar Nonce de Seguridad
@@ -5733,6 +5733,7 @@ private function update_stock_with_virtual($wc_product, $ml_product_data, $varia
     }
     
     /* Función para cargar los productos en el nav->#productos */
+    /* Funcion Documentada y Explicada en el Documento*/
     public function get_synced_products_callback()
     {
         // Verificación de seguridad
